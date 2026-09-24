@@ -1,0 +1,400 @@
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// -------------------------------------------------------------
+// NextAuth & User Models
+// -------------------------------------------------------------
+
+model User {
+  id            String          @id @default(cuid())
+  name          String?
+  email         String?         @unique
+  emailVerified DateTime?
+  password      String?
+  image         String?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+  onboardingCompleted  Boolean   @default(false)
+  onboardingStep       Int       @default(1)
+  onboardingData       String?   // JSON string for draft wizard state
+  weeklyReportEnabled  Boolean   @default(true)
+  lastWeeklyReportSent DateTime?
+
+  @@index([lastWeeklyReportSent])
+  // NextAuth relations
+  accounts      Account[]
+  sessions      Session[]
+
+  // Domain relations (all cascading deletes from User)
+  careerProfiles   CareerProfile[]
+  resumes          Resume[]
+  resumeAnalyses   ResumeAnalysis[]
+  userSkills       UserSkill[]
+  assessments      Assessment[]
+  skillGaps        SkillGap[]
+  roadmaps         Roadmap[]
+  dailyMissions    DailyMission[]
+  progress         Progress[]
+  feedbacks        Feedback[]
+  jobOpportunities JobOpportunity[]
+  careerFitResults CareerFitResult[]
+  skillEvidences   SkillEvidence[]
+  analyticsEvents  AnalyticsEvent[]
+  emailOtps        EmailOtp[]
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// -------------------------------------------------------------
+// Career & Profile Models
+// -------------------------------------------------------------
+
+model CareerProfile {
+  id                     String   @id @default(cuid())
+  userId                 String
+  targetRole             String
+  alignmentScore         Int?
+  combinedAlignmentScore Int?
+  summary                String?
+  strengths              String? // JSON string
+  weaknesses             String? // JSON string
+  questionnaireAnswers   String? // JSON string
+  agentPlanSummary       String? // JSON string
+  readinessDetails       String? // JSON string: transparent 5-component breakdown and explanations
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Resume {
+  id         String           @id @default(cuid())
+  userId     String
+  fileName   String
+  characters Int?
+  content    String?          // Extracted resume text
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @updatedAt
+
+  user     User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  analyses ResumeAnalysis[]
+}
+
+model ResumeAnalysis {
+  id             String   @id @default(cuid())
+  userId         String
+  resumeId       String?
+  targetRole     String
+  alignmentScore Int
+  summary        String
+  strengths      String   // JSON string
+  weaknesses     String   // JSON string
+  rawAnalysis    String?  // JSON string
+  createdAt      DateTime @default(now())
+
+  user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  resume Resume? @relation(fields: [resumeId], references: [id], onDelete: Cascade)
+}
+
+// -------------------------------------------------------------
+// Skills & Assessments
+// -------------------------------------------------------------
+
+model Skill {
+  id            String      @id @default(cuid())
+  name          String      @unique
+  category      String?
+  description   String?
+  difficulty    String?     @default("Intermediate")
+  prerequisites String?     // JSON string: string[]
+  concepts      String?     // JSON string: ConceptDefinition[]
+  createdAt     DateTime    @default(now())
+
+  userSkills UserSkill[]
+  skillGaps  SkillGap[]
+}
+
+model UserSkill {
+  id                 String   @id @default(cuid())
+  userId             String
+  skillId            String
+  confidence         String   // "strong" | "weak" | "none" (legacy)
+  found              Boolean  @default(false)
+  evidence           String?
+  category           String?  // "strong" | "overstated" | "understated" | "needs_work" | "hidden_skill" | "true_gap" | "developing"
+  quizConfidence     String?
+  quizScore          Int?
+  resumeEvidence     Int?     @default(0)
+  practiceScore      Int?     @default(0)
+  assessmentScore    Int?     @default(0)
+  missionCompletion Int?     @default(0)
+  projectEvidence    Int?     @default(0)
+  currentScore       Int?     @default(0)
+  confidenceLevel    String?  @default("LOW") // "LOW" | "MEDIUM" | "HIGH"
+  conceptScores      String?  // JSON string: Record<conceptId, { attempted, correct, score, status }>
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  skill Skill @relation(fields: [skillId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, skillId])
+}
+
+model SkillEvidence {
+  id             String   @id @default(cuid())
+  userId         String
+  idempotencyKey String   @unique
+  skillName      String
+  conceptId      String?
+  evidenceType   String   // "RESUME" | "PRACTICE" | "ASSESSMENT" | "MISSION" | "PROJECT"
+  score          Float
+  weight         Float    @default(1.0)
+  metadata       String?  // JSON string: attempt info, questions count, etc.
+  createdAt      DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, skillName])
+  @@index([userId, evidenceType])
+}
+
+model Assessment {
+  id             String   @id @default(cuid())
+  userId         String
+  type           String   // "ONBOARDING_QUIZ" | "DAY_ASSESSMENT" | "TOPIC_ASSESSMENT"
+  overallScore   Int
+  totalQuestions Int
+  correctCount   Int
+  passed         Boolean  @default(false)
+  dayNumber      Int?
+  weekId         String?
+  topicId        String?
+  attemptNumber  Int      @default(1)
+  answers        String   // JSON string: Record<string, number>
+  skillScores    String?  // JSON string: SkillQuizScore[]
+  review         String?  // JSON string: DayResultQuestionReview[]
+  createdAt      DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model SkillGap {
+  id         String   @id @default(cuid())
+  userId     String
+  skillId    String
+  category   String   // "true_gap" | "needs_work" etc.
+  targetRole String
+  severity   String?  // "high" | "medium" | "low"
+  createdAt  DateTime @default(now())
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  skill Skill @relation(fields: [skillId], references: [id], onDelete: Cascade)
+}
+
+// -------------------------------------------------------------
+// Roadmap & Execution Models
+// -------------------------------------------------------------
+
+model Roadmap {
+  id              String        @id @default(cuid())
+  userId          String
+  targetRole      String
+  strategyTitle   String?
+  timelineWeeks   Int           @default(8)
+  weeklyHours     Int           @default(18)
+  pace            String?
+  strategicAdvice String?
+  weeksData       String        // JSON string: WeekOverview[]
+  daysData        String?       // JSON string: Record<string, DayPlan>
+  dayResults      String?       // JSON string: Record<string, DayResult>
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  user  User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  items RoadmapItem[]
+}
+
+model RoadmapItem {
+  id          String   @id @default(cuid())
+  roadmapId   String
+  weekNumber  Int
+  dayNumber   Int?
+  title       String
+  description String?
+  completed   Boolean  @default(false)
+  score       Int?
+  metadata    String?  // JSON string
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  roadmap Roadmap @relation(fields: [roadmapId], references: [id], onDelete: Cascade)
+}
+
+model DailyMission {
+  id          String   @id @default(cuid())
+  userId      String
+  dayNumber   Int
+  weekNumber  Int
+  title       String
+  description String?
+  completed   Boolean  @default(false)
+  score       Int?
+  details     String?  // JSON string
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Progress {
+  id              String   @id @default(cuid())
+  userId          String
+  weekId          String
+  completedDays   Int      @default(0)
+  totalDays       Int      @default(5)
+  overallProgress Float    @default(0.0)
+  history         String?  // JSON string
+  updatedAt       DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Feedback {
+  id        String   @id @default(cuid())
+  userId    String?
+  email     String?
+  type      String?  // "bug" | "feature_request" | "general"
+  category  String?  // "QUESTION_REPORT" | "SYSTEM_FEEDBACK"
+  rating    Int?
+  content   String
+  route     String?
+  metadata  String?  // JSON string
+  createdAt DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// -------------------------------------------------------------
+// Opportunities & Fit Discovery
+// -------------------------------------------------------------
+
+model JobOpportunity {
+  id                        String   @id @default(cuid())
+  userId                    String
+  companyName               String
+  jobTitle                  String
+  jobDescription            String
+  fitScore                  Int
+  matchedSkills             String   // JSON string: string[] or SkillMatch[]
+  developingSkills          String?  // JSON string: string[]
+  missingSkills             String   // JSON string: string[]
+  criticalGaps              String   // JSON string: string[]
+  resumeAlignment           String?  // Text or JSON string
+  applicationRecommendation String?
+  recommendations           String?  // JSON string: string[]
+  isActive                  Boolean  @default(true)
+  createdAt                 DateTime @default(now())
+  updatedAt                 DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model CareerFitResult {
+  id               String   @id @default(cuid())
+  userId           String
+  recommendedRoles String   // JSON string: CareerDiscoveryMatch[]
+  selectedRole     String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// -------------------------------------------------------------
+// Experimentation & Analytics Telemetry
+// -------------------------------------------------------------
+
+model AnalyticsEvent {
+  id                String   @id @default(cuid())
+  eventId           String   @unique
+  eventName         String
+  occurredAt        DateTime
+  sessionId         String
+  anonymousId       String?
+  userId            String?
+  onboardingVariant String   // "control" | "v2"
+  step              Int?
+  stepName          String?  // "resume" | "analysis" | "discovery" | "questions" | "preview"
+  durationMs        Int?
+  selectedRole      String?
+  errorCode         String?
+  route             String
+  metadata          String?  // Sanitized JSON string (max 2KB, no PII)
+  createdAt         DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([eventName, occurredAt])
+  @@index([userId, occurredAt])
+  @@index([onboardingVariant, eventName])
+  @@index([onboardingVariant, occurredAt])
+}
+
+// -------------------------------------------------------------
+// Email OTP Verification
+// -------------------------------------------------------------
+
+model EmailOtp {
+  id        String   @id @default(cuid())
+  userId    String
+  email     String
+  otpHash   String
+  expiresAt DateTime
+  consumed  Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([email, createdAt])
+}
