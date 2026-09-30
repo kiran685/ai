@@ -16,7 +16,10 @@ export async function middleware(req: NextRequest) {
 
   const token = await getToken({
     req,
-    secret: process.env.NEXTAUTH_SECRET,
+    secret:
+      process.env.NEXTAUTH_SECRET ||
+      process.env.AUTH_SECRET ||
+      "ai_career_os_super_secret_jwt_key_2026_auth",
   });
 
   const isAuth = !!token;
